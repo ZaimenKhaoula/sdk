@@ -1,6 +1,7 @@
 package org.sdci.sdk.service;
 
 import org.sdci.sdk.communication.*;
+import org.sdci.sdk.models.Counter;
 import org.sdci.sdk.models.Message;
 import org.sdci.sdk.models.MessageType;
 import org.sdci.sdk.models.Metric;
@@ -27,10 +28,15 @@ import com.google.gson.JsonObject;
 
 public abstract class BasicService {
 	Map<String, ICommunicationFeature> CommunicationFeatures = new HashMap<String, ICommunicationFeature>();
-	ArrayList<Metric> metrics =new ArrayList<Metric>();
+	ArrayList<Counter> metrics =new ArrayList<Counter>();
+	Counter c1=new Counter("NbReqSent",0,false);
+	Counter c2=new Counter("NbRespSent",0,false);
+	Counter c3=new Counter("NBTopicSubscription",0,false);
+	Counter c4=new Counter("NbPublishedMsg",0,false);
 	// to identify the microservice we use
 	String microServiceUniqueIdentifier;
-
+	String microServiceUniqueIdentifierToSendPing;
+	String microServiceUniqueIdentifierToRecievePing;
 	// variables used to contact NCEM
 	ZContext contextUsedToContactNCEM;
 	ZMQ.Socket reqSocketUsedToContactNCEM;
@@ -51,6 +57,10 @@ public abstract class BasicService {
 	ZContext contextConfiguration;
 	String confMessage;
 	String confPubSocketUsedByRouter;
+	
+	// variables used by the MicroService to measure RTT (latency) 
+		ZContext contextToRespondToPing, contextToSendPing;
+		ZMQ.Socket dealerSocketUsedByPingSender, dealerSocketUsedByPingReciever;
 	final GsonBuilder builder = new GsonBuilder();
 	final Gson gson = builder.setPrettyPrinting().create();
 
@@ -89,6 +99,10 @@ public abstract class BasicService {
 		Properties ncem = new Properties();
 		InputStream inStream = new FileInputStream("NCEM.properties");
 		ncem.load(inStream);
+		metrics.add(c1);
+		metrics.add(c2);
+		metrics.add(c3);
+		metrics.add(c4);
 
 		// 2. contact the NCEM to get connection info of the router
 		// send the NCEM a get request in order to get the "local" router port number
@@ -120,6 +134,8 @@ public abstract class BasicService {
 		// PUB socket used for sending configuration messages
 		String[] parts = replyFromTheNCEM.split("-");
 		this.microServiceUniqueIdentifier = parts[0];
+		microServiceUniqueIdentifierToSendPing=parts[0]+"pingSender";
+		microServiceUniqueIdentifierToRecievePing=parts[0]+"pingReciever";
 		microServiceUniqueIdentifier = this.microServiceUniqueIdentifier;
 
 		// 3. Open the necessary sockets
@@ -177,32 +193,82 @@ public abstract class BasicService {
 				}
 			});*/
 		
-		monitoringContext = new ZContext();
-		routerSocketUsedbyNCEM = parts[5];
-		System.out.println("connected to NcemRouter .. " + routerSocketUsedbyNCEM);
-		dealerSocketUsedByMS = monitoringContext.createSocket(SocketType.DEALER);
-		dealerSocketUsedByMS.connect(routerSocketUsedbyNCEM);
-		dealerSocketUsedByMS.setIdentity(microServiceUniqueIdentifier.getBytes());
-		dealerSocketUsedByMS.setSendBufferSize(1024 * 1024);
-		ZMQ.Socket socketUsedForLaunchingThreadMonitoring;
-		socketUsedForLaunchingThreadMonitoring = ZThread.fork(monitoringContext, new ZThread.IAttachedRunnable() {
+		try {
+			monitoringContext = new ZContext();
+			routerSocketUsedbyNCEM = parts[5];
+			System.out.println("MOnitoring socket connected to NcemRouter .. " + routerSocketUsedbyNCEM);
+
+			dealerSocketUsedByMS = monitoringContext.createSocket(SocketType.DEALER);
+			dealerSocketUsedByMS.connect(routerSocketUsedbyNCEM);
+			dealerSocketUsedByMS.setIdentity(microServiceUniqueIdentifier.getBytes());
+			dealerSocketUsedByMS.setSendBufferSize(1024 * 1024);
+			ZMQ.Socket socketUsedForLaunchingThreadMonitoring;
+			socketUsedForLaunchingThreadMonitoring = ZThread.fork(monitoringContext, new ZThread.IAttachedRunnable() {
+				@Override
+				public void run(Object[] objects, ZContext zContext, ZMQ.Socket socket) {
+					String source,monitoringmessage;
+			
+					while (!Thread.currentThread().isInterrupted()) {
+						source = dealerSocketUsedByMS.recvStr(0);
+						monitoringmessage = dealerSocketUsedByMS.recvStr(0);
+				
+						if (monitoringmessage != null) {
+							monitoringMsgProcessing( monitoringmessage,source);	
+						}
+					}
+				}
+			});}catch(Exception e ) {}
+		
+	/*** ping to other microservices**/	
+		contextToSendPing = new ZContext();
+		routerSocketUsedByRouterURL = parts[1];
+		dealerSocketUsedByPingSender = contextToSendPing.createSocket(SocketType.DEALER);
+		System.out.println("connected to Router .. " + routerSocketUsedByRouterURL);
+		dealerSocketUsedByPingSender.connect(routerSocketUsedByRouterURL);
+		dealerSocketUsedByPingSender.setIdentity(microServiceUniqueIdentifierToSendPing.getBytes());
+                System.out.println("microserviceUniqueIdentiferTosendPing .. " + microServiceUniqueIdentifierToSendPing);
+		dealerSocketUsedByPingSender.setSendBufferSize(1024 * 1024);
+		dealerSocketUsedByPingSender.setReceiveTimeOut(10000);
+	
+		/*** recieve  microservices's ping**/	
+		
+		
+		 try {
+		
+		contextToRespondToPing = new ZContext();
+		routerSocketUsedByRouterURL = parts[1];
+		System.out.println("connected to Router .. " + routerSocketUsedByRouterURL);
+		dealerSocketUsedByPingReciever = contextToRespondToPing.createSocket(SocketType.DEALER);
+		dealerSocketUsedByPingReciever.connect(routerSocketUsedByRouterURL);
+		dealerSocketUsedByPingReciever.setIdentity(microServiceUniqueIdentifierToRecievePing.getBytes());
+System.out.println("microserviceUniqueIdentiferTorecievcePing .. " + microServiceUniqueIdentifierToRecievePing);
+		dealerSocketUsedByPingReciever.setSendBufferSize(1024 * 1024);
+		ZMQ.Socket socketUsedForLaunchingThreadP;
+		socketUsedForLaunchingThreadP = ZThread.fork(contextToRespondToPing, new ZThread.IAttachedRunnable() {
 			@Override
 			public void run(Object[] objects, ZContext zContext, ZMQ.Socket socket) {
-				String source,monitoringmessage;
-		
+				String destination, source, message;
+				Request request;
+				Response response;
 				while (!Thread.currentThread().isInterrupted()) {
-					source = dealerSocketUsedByMS.recvStr(0);
-					monitoringmessage = dealerSocketUsedByMS.recvStr(0);
-			
-					if (monitoringmessage != null) {
-						monitoringMsgProcessing( monitoringmessage,source);	
+					message = dealerSocketUsedByPingReciever.recvStr(0);
+					if (message != null) {
+						JsonObject message_json = gson.fromJson(message, JsonObject.class);
+						source = message_json.get("source").getAsString();
+						request = gson.fromJson(message_json.get("content").getAsJsonObject().toString(),
+								Request.class);
+						if(request.getBody().compareTo("ping")==0) {
+							response=new Response("", "ping");
+							Message responseMessage = new Message(microServiceUniqueIdentifierToRecievePing, source, MessageType.RESPONSE,
+									response);
+							dealerSocketUsedByPingReciever.send(gson.toJson(responseMessage));
+						
+						}
+
 					}
 				}
 			}
-		});
-		
-		
-		
+		});}catch(Exception e) {}	
 		
 		
 
@@ -395,50 +461,71 @@ public abstract class BasicService {
 	
 	private void monitoringMsgProcessing(String monitoringmessage, String source)
     {
+		    long startTime;
+		    long endTime; 
     	    String [] montoringMessageParts= monitoringmessage.split("-");
-    		switch (montoringMessageParts[1]) {
+    		switch (montoringMessageParts[2]) {
     		case "EnableMetric":
-    		 for(Metric m : metrics) {
+    		 for(Counter m : metrics) {
     			 if(m.getMetricName().compareTo(montoringMessageParts[0])==0)
     				 m.setEnabled(true);
-    			 dealerSocketUsedByServer.sendMore(source);
-    		     dealerSocketUsedByServer.send("ok");
+    			 dealerSocketUsedByMS.sendMore(source);
+    			 dealerSocketUsedByMS.send("ok");
     		 }
     		break;
     		case "DesableMetric" :
-    			 for(Metric m : metrics) {
+    			 for(Counter m : metrics) {
         			 if(m.getMetricName().compareTo(montoringMessageParts[0])==0)
         				 m.setEnabled(false);
-        			 dealerSocketUsedByServer.sendMore(source);
-        		     dealerSocketUsedByServer.send("ok");
+        			 dealerSocketUsedByMS.sendMore(source);
+        			 dealerSocketUsedByMS.send("ok");
         		 }
         	break;
         	
     		case "Reset":
-    			 for(Metric m : metrics) {
+    			 for(Counter m : metrics) {
         			 if(m.getMetricName().compareTo(montoringMessageParts[0])==0)
         				 m.setValue(0);
-        			 dealerSocketUsedByServer.sendMore(source);
-        		     dealerSocketUsedByServer.send("ok");
+        			 dealerSocketUsedByMS.sendMore(source);
+        			 dealerSocketUsedByMS.send("ok");
         		 }
         		
            break;
            
     		case "GetValue":
-    			 for(Metric m : metrics) {
+    			if(montoringMessageParts[1].compareTo("counetr")==0)
+    			{ for(Counter m : metrics) {
         			 if(m.getMetricName().compareTo(montoringMessageParts[0])==0)
         				
-        			 dealerSocketUsedByServer.sendMore(source);
-        		     dealerSocketUsedByServer.send(Float.toString(m.getValue())); 
+        				 dealerSocketUsedByMS.sendMore(source);
+        			 dealerSocketUsedByMS.send(Integer.toString(m.getValue())); 
         				 
-        		 }
-        		
+        		 }}
+    			else {
+    				//metric type is rtt
+    				
+    				String response_json = null;
+    				Request request= new Request("", "",  "ping");
+    				Message requestMessage = new Message(microServiceUniqueIdentifierToSendPing, montoringMessageParts[3]+"pingReciever", MessageType.REQUEST,
+    						request);
+    				startTime = System.currentTimeMillis();
+    				while(response_json==null) {
+    				dealerSocketUsedByPingSender.send(gson.toJson(requestMessage));
+    				// sourceOfResponse = dealerSocketUsedByClient.recvStr();
+    				response_json = dealerSocketUsedByPingSender.recvStr();
+    				}
+    				endTime = System.currentTimeMillis();
+    				 dealerSocketUsedByMS.sendMore(source);
+        			 dealerSocketUsedByMS.send(Float.toString(endTime-startTime)); 
+    				
+    			}
             break;
     		
     		default:
     		
     		}
     	}
+	
 	
 	
 	

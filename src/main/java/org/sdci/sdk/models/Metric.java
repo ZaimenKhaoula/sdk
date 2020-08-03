@@ -2,21 +2,16 @@ package org.sdci.sdk.models;
 
 public abstract class Metric {
 
-	private String metricName;
-	private float value;
-	private boolean enabled;
+protected String metricName;
+	
+	protected boolean enabled;
 	public String getMetricName() {
 		return metricName;
 	}
 	public void setMetricName(String metricName) {
 		this.metricName = metricName;
 	}
-	public float getValue() {
-		return value;
-	}
-	public void setValue(float value) {
-		this.value = value;
-	}
+	
 	public boolean isEnabled() {
 		return enabled;
 	}

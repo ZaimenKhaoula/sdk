@@ -1,5 +1,6 @@
 org/sdci/sdk/communication/IClientService.class
 org/sdci/sdk/models/Metric.class
+org/sdci/sdk/service/BasicService$5.class
 org/sdci/sdk/service/TranscoderBuilder.class
 org/sdci/sdk/models/Message.class
 org/sdci/sdk/service/DASHStreamClient.class
@@ -13,6 +14,7 @@ org/sdci/sdk/service/BasicService$1.class
 org/sdci/sdk/models/MessageContent.class
 org/sdci/sdk/service/IStreamServer.class
 org/sdci/sdk/service/DASHStreamClient$1.class
+org/sdci/sdk/service/BasicService$4.class
 org/sdci/sdk/communication/IPublisherService.class
 org/sdci/sdk/communication/IServerService.class
 org/sdci/sdk/models/Subscribe.class

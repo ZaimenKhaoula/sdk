@@ -1,7 +1,6 @@
 package org.sdci.sdk.models;
 
 public class RTT extends Metric{
-
 	private String idSource;
 	private String idDestination;
 	public String getIdSource() {
